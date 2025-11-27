@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>簡易振動台 Gcode ジェネレーター</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        warning: '#f59e0b',
+                        success: '#22c55e',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans p-6">
+
+    <div class="max-w-5xl mx-auto bg-white shadow-lg rounded-xl overflow-hidden">
+        
+        <div class="bg-slate-800 text-white p-6">
+            <h1 class="text-2xl font-bold">簡易振動台 Gcode ジェネレーター</h1>
+            <p class="text-slate-300 text-sm mt-1">Target: uCNC Shaking Table (Adaptive Sine Wave)</p>
+        </div>
+
+        <div class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            <div class="space-y-6">
+                <h2 class="text-xl font-semibold border-b pb-2 mb-4">動作設定</h2>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">波形タイプ</label>
+                    <div class="flex space-x-4">
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="radio" name="waveform" value="triangle" checked class="form-radio text-primary h-5 w-5" onchange="updateCalculations()">
+                            <span>三角波 (Triangle)</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="radio" name="waveform" value="sine" class="form-radio text-primary h-5 w-5" onchange="updateCalculations()">
+                            <span>疑似サイン波 (Sine)</span>
+                        </label>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1" id="sine-note">※サイン波は1ステップ約10msになるよう粗さを自動調整します。</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1 text-blue-700">振動周波数 (Hz) [最優先]</label>
+                    <input type="number" id="frequency" value="1.0" step="0.1" min="0.1" max="100" 
+                        class="w-full border-blue-300 border-2 rounded-lg p-2 focus:ring-2 focus:ring-primary focus:outline-none bg-blue-50 font-bold"
+                        oninput="updateCalculations()">
+                    <p class="text-xs text-gray-500 mt-1">範囲: 0.1 - 100 Hz</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">目標 片振幅 (mm)</label>
+                    <p class="text-xs text-gray-500 mb-2">※物理限界を超える場合は自動で安全な値に縮小されます</p>
+                    <input type="number" id="target-amplitude" value="10.0" step="0.1" min="0.1" max="80" 
+                        class="w-full border-gray-300 border rounded-lg p-2 focus:ring-2 focus:ring-primary focus:outline-none bg-gray-50"
+                        oninput="updateCalculations()">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">持続時間 (秒)</label>
+                    <input type="number" id="duration" value="10" step="1" min="1" 
+                        class="w-full border-gray-300 border rounded-lg p-2 focus:ring-2 focus:ring-primary focus:outline-none bg-gray-50"
+                        oninput="updateCalculations()">
+                </div>
+
+                <div id="status-box" class="p-4 rounded-lg border bg-gray-100">
+                    <p class="text-sm font-bold text-gray-700 mb-2">設定ステータス:</p>
+                    <div id="status-content" class="text-sm space-y-1">
+                        </div>
+                </div>
+
+                <div class="flex space-x-4 pt-2">
+                    <button onclick="generateAndAnalyze()" id="generate-btn" class="flex-1 bg-primary hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition shadow-md">
+                        Generate & Analyze
+                    </button>
+                    <button onclick="downloadGcode()" id="download-btn" disabled class="flex-1 bg-gray-300 text-gray-500 font-bold py-3 px-4 rounded-lg transition cursor-not-allowed">
+                        Download .nc
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex flex-col h-full space-y-4">
+                
+                <div class="flex-1 flex flex-col min-h-[300px]">
+                    <h2 class="text-xl font-semibold border-b pb-2 mb-2">Gcode Preview</h2>
+                    <textarea id="gcode-output" readonly 
+                        class="flex-1 w-full bg-slate-900 text-green-400 font-mono text-xs p-4 rounded-lg resize-none focus:outline-none overflow-y-auto"
+                        placeholder="生成ボタンを押すとここにコードが表示されます"></textarea>
+                    <div class="mt-1 text-right text-sm text-gray-500">
+                        <span id="line-count">0</span> lines
+                    </div>
+                </div>
+
+                <div id="analysis-result" class="hidden bg-slate-100 border border-slate-300 rounded-lg p-4">
+                    <h3 class="text-sm font-bold text-slate-700 mb-2 flex items-center">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                        Gcode 解析レポート
+                    </h3>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <p class="text-gray-500">Gcode指令総時間</p>
+                            <p class="font-mono text-lg font-bold" id="ana-time">-</p>
+                        </div>
+                        <div>
+                            <p class="text-gray-500">実効周波数 (平均)</p>
+                            <p class="font-mono text-lg font-bold text-primary" id="ana-freq">-</p>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500 border-t pt-2" id="ana-detail">
+                        </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 固定パラメータ
+        const LIMITS = {
+            MAX_VEL_MMS: 600.0,   // mm/s
+            MAX_ACCEL: 10000.0,   // mm/s^2
+            CENTER_POS: 100.0,    // mm
+            MAX_SAFE_AMP: 80.0,   // mm
+            MIN_SEG_TIME: 0.010   // 10ms (サイン波の最小ステップ時間)
+        };
+
+        let currentGcode = "";
+        let effectiveAmplitude = 0;
+        let plannedCycles = 0;
+        let usedSegments = 0; // 実際に使用した分割数
+
+        // 初期化
+        updateCalculations();
+
+        function updateCalculations() {
+            const freqInput = document.getElementById('frequency');
+            const ampInput = document.getElementById('target-amplitude');
+            const statusBox = document.getElementById('status-box');
+            const statusContent = document.getElementById('status-content');
+            const genBtn = document.getElementById('generate-btn');
+
+            let freq = parseFloat(freqInput.value);
+            let targetAmp = parseFloat(ampInput.value);
+            const waveform = document.querySelector('input[name="waveform"]:checked').value;
+
+            if (isNaN(freq) || freq <= 0 || isNaN(targetAmp) || targetAmp <= 0) {
+                statusBox.className = "p-4 rounded-lg border bg-red-100 border-red-400 text-red-700";
+                statusContent.innerHTML = "数値を正しく入力してください。";
+                genBtn.disabled = true;
+                genBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                return;
+            }
+
+            if (freq > 100) {
+                statusBox.className = "p-4 rounded-lg border bg-red-100 border-red-400 text-red-700";
+                statusContent.innerHTML = "周波数は 100Hz 以下に設定してください。";
+                genBtn.disabled = true;
+                genBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                return;
+            }
+
+            // --- 分割数の動的計算 (サイン波用) ---
+            let segMsg = "";
+            if (waveform === 'sine') {
+                const period = 1.0 / freq;
+                // 周期 / 0.01s で分割数を決定
+                let segments = Math.floor(period / LIMITS.MIN_SEG_TIME);
+                
+                // 下限4 (菱形)、上限32 (滑らかすぎ防止)
+                if (segments > 32) segments = 32;
+                if (segments < 4) segments = 4;
+                
+                usedSegments = segments;
+                const timePerSeg = (period / segments) * 1000; // ms
+                
+                segMsg = `<br><span class="text-xs text-blue-600 font-bold">└ サイン波分解能: 1周期 ${segments}分割 (${timePerSeg.toFixed(1)}ms/step)</span>`;
+            } else {
+                usedSegments = 2; // 三角波は実質2分割
+                const timePerSeg = (1.0 / freq / 2) * 1000;
+                segMsg = `<br><span class="text-xs text-gray-500">└ 三角波 (往復のみ): ${timePerSeg.toFixed(1)}ms/step</span>`;
+            }
+
+
+            // --- 安全振幅計算 ---
+            let limitVel = (waveform === 'triangle') 
+                ? LIMITS.MAX_VEL_MMS / (4 * freq)
+                : LIMITS.MAX_VEL_MMS / (2 * Math.PI * freq);
+
+            const angularVelSq = Math.pow(2 * Math.PI * freq, 2);
+            const limitAccel = LIMITS.MAX_ACCEL / angularVelSq;
+            const limitPos = LIMITS.MAX_SAFE_AMP;
+
+            const maxPhysAmp = Math.min(limitVel, limitAccel, limitPos);
+            effectiveAmplitude = Math.min(targetAmp, maxPhysAmp);
+
+            // UI更新
+            genBtn.disabled = false;
+            genBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+
+            const isLimited = effectiveAmplitude < targetAmp;
+            if (isLimited) {
+                const limitFactor = (effectiveAmplitude === limitPos) ? "可動範囲" : (effectiveAmplitude === limitVel) ? "速度限界" : "加速度限界";
+                statusBox.className = "p-4 rounded-lg border bg-yellow-100 border-yellow-400 text-yellow-900";
+                statusContent.innerHTML = `
+                    <p>⚠ <strong>自動調整: 振幅を縮小しました</strong></p>
+                    <p class="text-xs">目標 ${targetAmp}mm は ${limitFactor}により実現不可。</p>
+                    <p class="text-lg font-bold mt-1">実効振幅: ${effectiveAmplitude.toFixed(4)} mm</p>
+                    ${segMsg}
+                `;
+            } else {
+                statusBox.className = "p-4 rounded-lg border bg-green-100 border-green-400 text-green-900";
+                statusContent.innerHTML = `
+                    <p>✅ <strong>設定OK</strong></p>
+                    <p class="text-lg font-bold mt-1">実効振幅: ${effectiveAmplitude.toFixed(4)} mm</p>
+                    ${segMsg}
+                `;
+            }
+        }
+
+        function generateAndAnalyze() {
+            generateGcode();
+            analyzeGcodeOutput();
+        }
+
+        function generateGcode() {
+            updateCalculations(); // usedSegments を確定させる
+            
+            const freq = parseFloat(document.getElementById('frequency').value);
+            const duration = parseFloat(document.getElementById('duration').value);
+            const waveform = document.querySelector('input[name="waveform"]:checked').value;
+            
+            if (effectiveAmplitude < 0.001) {
+                alert("振幅が小さすぎます。");
+                return;
+            }
+
+            plannedCycles = Math.ceil(duration * freq);
+            
+            let gcode = [];
+            
+            // Header
+            gcode.push("$HX");
+            gcode.push("G90");
+            gcode.push("G21");
+            gcode.push("G1 X100 F600"); // Center
+            gcode.push("G4 P1");
+            gcode.push("");
+            
+            gcode.push(`(Wave: ${waveform}, Freq: ${freq}Hz, Amp: ${effectiveAmplitude.toFixed(4)}mm)`);
+            if (waveform === 'sine') {
+                gcode.push(`(Resolution: ${usedSegments} segments/cycle)`);
+            }
+            gcode.push("G64"); 
+
+            gcode.push("(--- START LOOP ---)");
+
+            if (waveform === 'triangle') {
+                const feedRate = (4 * effectiveAmplitude * freq * 60).toFixed(3);
+                const posTop = (LIMITS.CENTER_POS + effectiveAmplitude).toFixed(4);
+                const posBtm = (LIMITS.CENTER_POS - effectiveAmplitude).toFixed(4);
+
+                for (let i = 0; i < plannedCycles; i++) {
+                    gcode.push(`G1 X${posTop} F${feedRate}`);
+                    gcode.push(`G1 X${posBtm}`);
+                }
+            } else {
+                // usedSegments は updateCalculations で 4～32 に調整済み
+                const segments = usedSegments;
+                const timePerSeg = (1 / freq) / segments;
+                
+                for (let i = 0; i < plannedCycles; i++) {
+                    for (let s = 1; s <= segments; s++) {
+                        const theta = (s / segments) * 2 * Math.PI;
+                        const targetX = LIMITS.CENTER_POS + (effectiveAmplitude * Math.sin(theta));
+                        
+                        const prevTheta = ((s - 1) / segments) * 2 * Math.PI;
+                        const prevX = LIMITS.CENTER_POS + (effectiveAmplitude * Math.sin(prevTheta));
+                        const dist = Math.abs(targetX - prevX);
+                        
+                        let segmentFeed = (dist / timePerSeg) * 60;
+                        if (segmentFeed < 1) segmentFeed = 1;
+                        if (segmentFeed > LIMITS.MAX_VEL_MMS * 60) segmentFeed = LIMITS.MAX_VEL_MMS * 60;
+
+                        gcode.push(`G1 X${targetX.toFixed(4)} F${segmentFeed.toFixed(1)}`);
+                    }
+                }
+            }
+
+            gcode.push("(--- END LOOP ---)");
+
+            // Footer
+            gcode.push(`G1 X${LIMITS.CENTER_POS} F600`);
+            gcode.push("M2");
+            gcode.push("%");
+
+            currentGcode = gcode.join("\n");
+            document.getElementById('gcode-output').value = currentGcode;
+            document.getElementById('line-count').innerText = gcode.length;
+            
+            const dlBtn = document.getElementById('download-btn');
+            dlBtn.disabled = false;
+            dlBtn.classList.remove('bg-gray-300', 'text-gray-500', 'cursor-not-allowed');
+            dlBtn.classList.add('bg-success', 'hover:bg-green-600', 'text-white', 'shadow-md');
+        }
+
+        function analyzeGcodeOutput() {
+            const lines = currentGcode.split('\n');
+            let inLoop = false;
+            let totalTimeSec = 0;
+            let currentX = LIMITS.CENTER_POS;
+            let currentF = 600; 
+
+            for (let line of lines) {
+                const trimLine = line.trim();
+                if (trimLine.includes("(--- START LOOP ---)")) {
+                    inLoop = true;
+                    currentX = LIMITS.CENTER_POS; 
+                    continue;
+                }
+                if (trimLine.includes("(--- END LOOP ---)")) {
+                    inLoop = false;
+                    break;
+                }
+
+                if (inLoop && trimLine.startsWith("G1")) {
+                    const xMatch = trimLine.match(/X([\d\.]+)/);
+                    const fMatch = trimLine.match(/F([\d\.]+)/);
+
+                    if (xMatch) {
+                        const targetX = parseFloat(xMatch[1]);
+                        if (fMatch) currentF = parseFloat(fMatch[1]);
+
+                        const dist = Math.abs(targetX - currentX);
+                        const velPerSec = currentF / 60.0;
+
+                        if (dist > 0 && velPerSec > 0) {
+                            totalTimeSec += dist / velPerSec;
+                        }
+                        currentX = targetX;
+                    }
+                }
+            }
+
+            const resBox = document.getElementById('analysis-result');
+            const resTime = document.getElementById('ana-time');
+            const resFreq = document.getElementById('ana-freq');
+            const resDetail = document.getElementById('ana-detail');
+
+            resBox.classList.remove('hidden');
+
+            if (totalTimeSec > 0 && plannedCycles > 0) {
+                const actualFreq = plannedCycles / totalTimeSec;
+                
+                resTime.textContent = totalTimeSec.toFixed(3) + " s";
+                resFreq.textContent = actualFreq.toFixed(3) + " Hz";
+
+                const targetFreq = parseFloat(document.getElementById('frequency').value);
+                const error = Math.abs(targetFreq - actualFreq) / targetFreq;
+                const waveform = document.querySelector('input[name="waveform"]:checked').value;
+
+                if (error > 0.05) {
+                     resFreq.className = "font-mono text-lg font-bold text-red-600";
+                     resFreq.textContent += " (⚠誤差大)";
+                } else {
+                     resFreq.className = "font-mono text-lg font-bold text-success";
+                }
+
+                // 詳細表示
+                if (waveform === 'sine') {
+                    const periodMs = (1/targetFreq)*1000;
+                    const stepMs = periodMs / usedSegments;
+                    resDetail.innerHTML = `波形情報: ${usedSegments}分割/周期 (約 ${stepMs.toFixed(1)}ms/step)`;
+                } else {
+                    resDetail.innerHTML = "波形情報: 三角波 (線形補間)";
+                }
+
+            } else {
+                resTime.textContent = "Error";
+                resFreq.textContent = "-";
+            }
+        }
+
+        function downloadGcode() {
+            if (!currentGcode) return;
+            const blob = new Blob([currentGcode], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            
+            const freq = document.getElementById('frequency').value;
+            const wave = document.querySelector('input[name="waveform"]:checked').value;
+            
+            a.href = url;
+            a.download = `vibration_${wave}_${freq}Hz_amp${effectiveAmplitude.toFixed(1)}.nc`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
