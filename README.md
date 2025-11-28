@@ -2,7 +2,7 @@
 Anycubic i3 Mega の3Dプリンタとしての自我を失わせて、  
 Y軸のみを使用した振動台として生きてもらうための
 uCNCを利用した簡易(Simple)振動(Shaking)テーブル(Table)for Anycubic i3 Mega、
-よって uCNC_sstai3m です。  
+よって uCNC_sst4ai3m です。  
 ファームの基本的な機能はこちらまで  
 https://github.com/Paciente8159/uCNC  
 
